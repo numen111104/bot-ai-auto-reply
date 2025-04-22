@@ -1,52 +1,89 @@
-require('dotenv').config();
-const express = require('express');
-const axios = require('axios');
-const bodyParser = require('body-parser');
+require("dotenv").config();
+const express = require("express");
+const axios = require("axios");
+const bodyParser = require("body-parser");
 
 const app = express();
 app.use(bodyParser.json());
 
-// Prompt bisa kamu ubah-ubah sesuai bisnis kamu
 const DEFAULT_PROMPT = process.env.DEFAULT_PROMPT;
+const PORT = 3000;
 
-// 🔥 Listen dari WhatsApp Webhook (via Whacenter)
-app.post('/webhook', async (req, res) => {
-    const { number, message } = req.body;
+// Webhook endpoint yang dipakai Whacenter
+app.post("/webhook", async (req, res) => {
+  const { from, message, source } = req.body;
 
-    if (!number || !message) return res.status(400).send("Invalid payload");
+  // ✅ Validasi payload
+  if (!from || !message || source !== "WHACENTER") {
+    return res.status(400).send("Invalid or unauthorized payload");
+  }
 
-    try {
-        // 💬 Generate balasan dari Gemini AI
-        const reply = await getGeminiReply(message);
+  // ✅ Cek kalau pesan kosong
+  if (message.trim() === "") {
+    return res.send("Kosong, tidak dijawab");
+  }
 
-        // 🚀 Kirim balasan via Whacenter
-        await axios.post(process.env.WHACENTER_API_URL, {
-            device_id: process.env.WHACENTER_DEVICE_ID,
-            number: number,
-            message: reply
-        });
+  try {
+    console.log(`[WA] ${from} > ${message}`);
 
-        res.send("Reply sent");
-    } catch (err) {
-        console.error(err);
-        res.status(500).send("Error handling message");
-    }
+    // ✅ Proses ke Gemini
+    const reply = await getGeminiReply(message);
+    console.log(`[Gemini] ${reply}`);
+
+    // // Kirim status mengetik
+    // await axios.post(process.env.WHACENTER_API_URL, {
+    //   device_id: process.env.WHACENTER_DEVICE_ID,
+    //   number: from,
+    //   typing: true,
+    // });
+
+    // ✅ Simulasi delay biar human-like
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+
+    // ✅ Kirim balasan via Whacenter
+    await axios.post(process.env.WHACENTER_API_URL, {
+      device_id: process.env.WHACENTER_DEVICE_ID,
+      number: from,
+      message: reply,
+    });
+
+    res.send("Reply sent");
+  } catch (err) {
+    console.error("Error handling message:", err.response?.data || err.message);
+    res.status(500).send("Error handling message");
+  }
 });
 
-// Fungsi untuk interaksi ke Gemini (Google AI)
+// Fungsi interaksi ke Google Gemini 2.0 Flash
 async function getGeminiReply(userMessage) {
-    const prompt = `${DEFAULT_PROMPT}\nUser: ${userMessage}\nAI:`;
+  const prompt = `${DEFAULT_PROMPT}\nUser: ${userMessage}\nAI:`;
 
+  try {
     const response = await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${process.env.GEMINI_API_KEY}`,
-        {
-            contents: [{ parts: [{ text: prompt }] }]
-        }
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      {
+        contents: [
+          {
+            parts: [{ text: prompt }],
+          },
+        ],
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }
     );
 
-    return response.data.candidates?.[0]?.content?.parts?.[0]?.text || "Maaf, saya tidak bisa menjawab saat ini.";
+    const reply = response.data.candidates?.[0]?.content?.parts?.[0]?.text;
+    return reply || "Maaf, saya belum bisa memberikan jawaban saat ini.";
+  } catch (err) {
+    console.error("Error from Gemini:", err.response?.data || err.message);
+    return "Maaf, terjadi kesalahan pada sistem AI.";
+  }
 }
 
-// Run server
-const PORT = 3000;
-app.listen(PORT, () => console.log(`Bot aktif di http://localhost:${PORT}`));
+// 🔥 Start server
+app.listen(PORT, () =>
+  console.log(`✅ Gemini WhatsApp Bot aktif di http://localhost:${PORT}`)
+);
